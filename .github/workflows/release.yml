@@ -7,8 +7,8 @@ on:
     types: [completed]
 
 permissions:
-  contents: read
-  packages: write
+  contents: write
+  actions: read
   attestations: write
   id-token: write
 
@@ -16,81 +16,45 @@ concurrency:
   group: production
   cancel-in-progress: false
 
-env:
-  IMAGE_NAME: ghcr.io/misterclean/divvy-bluesky-bot
-
 jobs:
-  build:
-    if: github.event.workflow_run.conclusion == 'success'
-    runs-on: ubuntu-latest
-    outputs:
-      digest: ${{ steps.build.outputs.digest }}
-    steps:
-      - name: Check out the tested commit
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-
-      - name: Log in to GHCR
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-
-      - name: Build and publish the immutable image
-        id: build
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          platforms: linux/amd64
-          push: true
-          tags: ${{ env.IMAGE_NAME }}:sha-${{ github.event.workflow_run.head_sha }}
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha }}
-            org.opencontainers.image.created=${{ github.event.workflow_run.updated_at }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Attest the published image
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
-        with:
-          subject-name: ${{ env.IMAGE_NAME }}
-          subject-digest: ${{ steps.build.outputs.digest }}
-          push-to-registry: true
-
   promote:
-    needs: build
-    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-24.04
     environment: production
     steps:
-      - name: Log in to GHCR
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - name: Download the exact bundle tested by main CI
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-
-      - name: Validate the build digest
+          name: linux-native
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Attest tested native bundle
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: chicago-bikeshare-bot-linux-x86_64.tar.gz
+      - name: Publish versioned release and promote its checksum
         env:
-          IMAGE_DIGEST: ${{ needs.build.outputs.digest }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          COMMIT: ${{ github.event.workflow_run.head_sha }}
         run: |
-          if [[ ! "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "Invalid image digest: $IMAGE_DIGEST" >&2
-            exit 1
+          set -euo pipefail
+          [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          test "$(gh api "repos/$GH_REPO/commits/main" --jq .sha)" = "$COMMIT"
+          asset=chicago-bikeshare-bot-linux-x86_64.tar.gz
+          checksum=$(sha256sum "$asset" | cut -d' ' -f1)
+          jq -n --arg repository "$GH_REPO" --arg commit "$COMMIT" --arg sha256 "$checksum" --arg asset "$asset" \
+            '{repository:$repository,commit:$commit,sha256:$sha256,asset:$asset}' > production.json
+          if gh release view "app-$COMMIT" >/dev/null 2>&1; then
+            mkdir existing
+            gh release download "app-$COMMIT" --pattern production.json --dir existing
+            cmp production.json existing/production.json
+          else
+            gh release create "app-$COMMIT" "$asset" production.json --target "$COMMIT" \
+              --title "Native release $COMMIT" --notes "Tested Rust worker and pinned Petit. Persistent state is not included." --latest=false
           fi
-
-      - name: Promote the tested digest to production
-        env:
-          IMAGE_DIGEST: ${{ needs.build.outputs.digest }}
-        run: >-
-          docker buildx imagetools create
-          --tag "${IMAGE_NAME}:production"
-          "${IMAGE_NAME}@${IMAGE_DIGEST}"
+          if ! gh release view production >/dev/null 2>&1; then
+            gh release create production --target "$COMMIT" --title "Approved production channel" \
+              --notes "The host polls production.json and verifies the versioned release checksum." --latest=false
+          fi
+          gh release upload production production.json --clobber

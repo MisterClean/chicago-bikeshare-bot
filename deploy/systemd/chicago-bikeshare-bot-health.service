@@ -1,0 +1,7 @@
+[Unit]
+Description=Check Chicago Bikeshare Bot health and retain 90 days of Petit history
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/opt/chicago-bikeshare-bot/current/deploy/health.py

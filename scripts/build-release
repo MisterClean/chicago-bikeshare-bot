@@ -1,0 +1,23 @@
+#!/bin/bash
+set -euo pipefail
+readonly PETIT_REV=170dee43be847b29bc065f4265a4b3e16d4fb7fd
+cargo build --release --locked
+mkdir -p output/vendor
+if [[ ! -d output/vendor/petit/.git ]]; then
+  git clone https://github.com/PedramNavid/petit.git output/vendor/petit
+fi
+git -C output/vendor/petit checkout --detach "$PETIT_REV"
+CARGO_PROFILE_RELEASE_STRIP=true CARGO_PROFILE_RELEASE_DEBUG=0 cargo build --manifest-path output/vendor/petit/Cargo.toml --release --locked --no-default-features --features sqlite --bin pt
+rm -rf dist/bundle
+mkdir -p dist/bundle
+cp target/release/chicago-bikeshare-bot dist/bundle/
+cp output/vendor/petit/target/release/pt dist/bundle/
+cp NOTICE.md assets/fonts/OFL.txt dist/bundle/
+cp output/vendor/petit/README.md dist/bundle/PETIT-README.md
+printf '%s\n' "$PETIT_REV" > dist/bundle/PETIT-REVISION
+python3 - <<'PYCODE'
+import shutil
+shutil.copytree('deploy', 'dist/bundle/deploy', ignore=shutil.ignore_patterns('__pycache__'))
+PYCODE
+dist/bundle/pt validate deploy/jobs
+tar -czf dist/chicago-bikeshare-bot-linux-x86_64.tar.gz -C dist/bundle .

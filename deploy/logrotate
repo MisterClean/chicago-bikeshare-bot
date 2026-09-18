@@ -1,0 +1,11 @@
+/var/log/chicago-bikeshare-bot/worker.log {
+    daily
+    rotate 14
+    maxsize 5M
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 ubuntu ubuntu
+    su ubuntu ubuntu
+}

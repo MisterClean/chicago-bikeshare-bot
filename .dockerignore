@@ -21,3 +21,5 @@ tests
 *.sqlite3-*
 *.db
 *.db-*
+
+target
