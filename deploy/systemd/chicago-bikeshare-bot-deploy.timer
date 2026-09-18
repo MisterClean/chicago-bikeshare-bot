@@ -1,0 +1,11 @@
+[Unit]
+Description=Check GitHub for approved Chicago Bikeshare Bot releases
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30
+Unit=chicago-bikeshare-bot-deploy.service
+
+[Install]
+WantedBy=timers.target

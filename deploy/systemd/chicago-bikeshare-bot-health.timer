@@ -1,0 +1,10 @@
+[Unit]
+Description=Check Chicago Bikeshare Bot health every 30 minutes
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=30min
+Unit=chicago-bikeshare-bot-health.service
+
+[Install]
+WantedBy=timers.target

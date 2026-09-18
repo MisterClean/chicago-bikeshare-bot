@@ -1,91 +1,111 @@
-# Production deployment
+# Native Lightsail deployment
 
-Production uses a pull-based deployment. GitHub Actions builds and attests one
-`linux/amd64` image after `CI / test` succeeds on `main`, then promotes that
-exact digest to the GHCR `production` tag. The Lightsail host polls the tag and
-runs the image by digest.
+The application and scheduler are Rust executables. GitHub builds them on Ubuntu
+24.04 x86_64; production does not need Docker, Cargo, Node, or a Python package
+environment. Small deployment, startup and health scripts use Ubuntu's built-in
+Python 3 standard library.
 
-## GitHub prerequisites
+## Persistent layout
 
-Before the first release:
+| Location | Purpose |
+| --- | --- |
+| `/opt/chicago-bikeshare-bot/releases/<commit>/` | Root-owned executable bundles; three recent releases plus rollback target retained. |
+| `/opt/chicago-bikeshare-bot/current` | Atomic pointer to active bundle. |
+| `/etc/divvy-bot.env` | Existing root-only credentials; preserved legacy path. |
+| `/var/lib/divvy-bot/bot.sqlite3` | Existing v2 historical database; never replaced or automatically migrated. |
+| `/var/lib/divvy-bot/native-backups/` | Seven consistent pre-deployment backups, root-only directory. |
+| `/var/lib/petit-chicago-bikeshare-bot/history.sqlite3` | Separate Petit execution history, terminal records retained 90 days. |
+| `/var/log/chicago-bikeshare-bot/worker.log` | Persistent worker output, rotated daily or at 5 MiB, 14 rotations. |
 
-1. Create a `production` environment and restrict its deployment branches to
-   `main`. Keep required-reviewer approval enabled for the initial rollouts.
-2. Protect `main` with pull requests, required `CI / test`, resolved review
-   conversations, and blocks on force pushes and branch deletion.
-3. After the first package publish, make
-   `ghcr.io/misterclean/divvy-bluesky-bot` public so the host can pull it
-   anonymously.
+The legacy paths are deliberate: changing the app name does not rename its live
+state. `BLUESKY_IDENTIFIER=chi-bike-stations.bsky.social` identifies the same
+account DID, `did:plc:iczo3amdbvcbhxikgzhiaxzj`. No app-password rotation or post
+history migration is required. `.env` and databases never enter release bundles.
 
-The workflows do not need production secrets or an SSH key.
+## CI/CD
 
-## Host installation
+The required `test` CI job runs Rust formatting, Clippy, tests, deployment safety
+tests, a native release build and real Petit schedule/failure/timeout checks.
+It uploads the exact tested bundle. Successful **push CI on main** invokes
+Release, gated by the existing **production environment approval**. Release
+attests the bundle, publishes `app-<commit>`, and updates the `production`
+release's `production.json` manifest. The environment reviewer gate remains in
+place; future deployments require that approval before the host receives them.
 
-Review the files before installing them. The first installation should keep the
-deployment poller disabled until a promoted image has been shadow-tested:
+A five-minute systemd timer downloads the public approved manifest over HTTPS.
+The deployer pins the repository, validates commit/checksum formats, verifies
+SHA-256, rejects unsafe archives, and validates the candidate binaries/jobs.
+No GitHub token or incoming SSH credential is required for normal updates.
+Provenance attestations are available on GitHub; host verification uses the
+approved HTTPS manifest plus SHA-256, not an on-host Sigstore verifier.
 
-```bash
-sudo install -o root -g root -m 0755 \
-  deploy/deploy-divvy-bot /usr/local/sbin/deploy-divvy-bot
-sudo install -o root -g root -m 0644 \
-  deploy/divvy-bot-deploy.service /etc/systemd/system/divvy-bot-deploy.service
-sudo install -o root -g root -m 0644 \
-  deploy/divvy-bot-deploy.timer /etc/systemd/system/divvy-bot-deploy.timer
-sudo install -o root -g root -m 0755 \
-  deploy/check-divvy-bot-health /usr/local/sbin/check-divvy-bot-health
-sudo install -o root -g root -m 0644 \
-  deploy/divvy-bot-health.service /etc/systemd/system/divvy-bot-health.service
-sudo install -o root -g root -m 0644 \
-  deploy/divvy-bot-health.timer /etc/systemd/system/divvy-bot-health.timer
-sudo systemctl daemon-reload
+Deployment waits for the worker lock before stopping the scheduler. It creates
+a consistent SQLite backup, runs the candidate against a disposable copy with
+publishing forced off, and compares the schema, migrations, historical IDs,
+first-seen timestamps, event payloads, and delivered records. It then switches
+the executable pointer, runs the live worker under a 64 MiB limit, verifies the
+same invariants, and starts Petit. Failed cutovers restore the previous executable
+and scheduling. **Rollback never restores database bytes after live writes.**
+
+The original Docker units and image are kept on the host for the initial
+migration fallback. After success, their three timers are disabled. They are
+not used for new deployments. Other applications and their PM2 processes remain
+independent.
+
+## CLI operations
+
+```sh
+# Scheduler status/start/stop/restart and logs
+sudo systemctl status chicago-bikeshare-bot
+sudo systemctl restart chicago-bikeshare-bot
+sudo journalctl -u chicago-bikeshare-bot -n 50
+
+# One immediate run, with production credentials and the deployment lock
+sudo systemctl start chicago-bikeshare-bot-run
+sudo tail -n 50 /var/log/chicago-bikeshare-bot/worker.log
+
+# Read-only application inspection (credentials are unnecessary)
+DB_PATH=/var/lib/divvy-bot/bot.sqlite3 /opt/chicago-bikeshare-bot/current/chicago-bikeshare-bot status
+DB_PATH=/var/lib/divvy-bot/bot.sqlite3 /opt/chicago-bikeshare-bot/current/chicago-bikeshare-bot check
+
+# Inspect/validate Petit jobs
+/opt/chicago-bikeshare-bot/current/pt list /opt/chicago-bikeshare-bot/current/deploy/jobs
+/opt/chicago-bikeshare-bot/current/pt validate /opt/chicago-bikeshare-bot/current/deploy/jobs
+
+# Poll for an approved release immediately
+sudo systemctl start chicago-bikeshare-bot-deploy
+sudo journalctl -u chicago-bikeshare-bot-deploy -n 80
 ```
 
-Manually deploy a known published digest:
+Petit runs every six hours at 00:00, 06:00, 12:00 and 18:00 **UTC**. A startup
+check runs immediately when the most recent scheduled slot has no successful
+bot run. The wrapper uses `exec`, so task timeout targets the actual worker.
+Systemd owns the entire cgroup, starts Petit at boot and limits the scheduler
+plus worker to 96 MiB with no swap. Worker output goes directly to its rotated
+file, avoiding Petit's in-memory stdout buffering. Partial logs survive timeouts.
 
-```bash
-sudo deploy-divvy-bot --digest sha256:<known-digest>
-```
+Petit is pinned to `170dee43be847b29bc065f4265a4b3e16d4fb7fd`, built with only
+`sqlite` (no HTTP API or TUI). Its upstream documentation calls it experimental.
+Its `pt trigger` starts a separate scheduler and does **not** propagate task
+failure as an exit failure; use the systemd manual-run service above. Startup
+marks stale Petit executions interrupted after systemd has reaped old children.
+The bot's own durable queue/recovery is independent of Petit history.
 
-After the first deploy and rollback have both been verified:
+Health runs every 30 minutes, checks service state, the last bot run, a successful
+run within eight hours, and at least 256 MiB disk headroom. Failures are visible
+in `systemctl --failed` and the journal. There is no external alert integration.
 
-```bash
-sudo systemctl enable --now divvy-bot-deploy.timer
-sudo systemctl enable --now divvy-bot-health.timer
-```
+## Bootstrap and rollback
 
-The deployer:
+Bootstrap requires Ubuntu 24.04 x86_64, Python 3.12+, systemd, CA certificates,
+`flock`, and the existing UID 1000 `ubuntu` account and production state.
+Install root-owned `update.py` as `/usr/local/sbin/deploy-chicago-bikeshare-bot`,
+create the log/Petit directories owned by ubuntu, install the two deploy unit
+files, then enable `chicago-bikeshare-bot-deploy.timer`. The first approved
+manifest completes the cutover, including the remaining units and logrotate.
 
-- refuses to pull when less than 2 GiB is free;
-- creates a SQLite-aware backup;
-- runs the candidate against that backup with publishing disabled;
-- rejects removed or incompatibly changed tables, indexes, and columns;
-- pins `/etc/divvy-bot-image.env` to the exact image digest;
-- runs one live bot cycle and restores the previous image pointer on failure;
-- retains deployment metadata, the backup, and the current and previous image;
-- always restores the regular six-hour bot timer after an interrupted deploy.
-
-Logs are available with:
-
-```bash
-journalctl -u divvy-bot-deploy.service
-journalctl -u divvy-bot.service
-journalctl -u divvy-bot-health.service
-```
-
-The health timer checks every 30 minutes and fails visibly when SQLite is not
-healthy, a delivery is not complete, the last successful run is more than eight
-hours old, the regular bot timer is inactive, or less than 3 GiB is free beneath
-the database. It deliberately does not restart Docker because this host may run
-other workloads.
-
-## Rollback
-
-Run the `Roll back production` GitHub workflow with either a full commit SHA
-from `main` or a previously published `sha256:` digest. It validates the
-package image and moves the `production` tag to that exact digest. The host
-poller then performs the same backup, shadow validation, pinning, and live-cycle
-checks.
-
-Do not restore a database automatically after an application failure. Restore a
-saved database only as part of a deliberate maintenance rollback when a schema
-change requires it.
+To roll back a native release, dispatch **Roll back production** with the full
+commit SHA of an existing `app-<commit>` release and approve its production gate.
+This promotes that release through the same shadow/live checks. Schema changes
+must be designed and approved separately; this deployer never migrates the DB.
+Do not delete persistent state or run `init`/`import-legacy` against production.

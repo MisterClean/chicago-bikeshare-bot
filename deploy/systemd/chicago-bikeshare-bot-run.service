@@ -1,0 +1,17 @@
+[Unit]
+Description=Run Chicago Bikeshare Bot now
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+EnvironmentFile=/etc/divvy-bot.env
+WorkingDirectory=/var/lib/divvy-bot
+ExecStart=/opt/chicago-bikeshare-bot/current/deploy/run-bot run
+TimeoutStartSec=1600
+MemoryMax=64M
+MemorySwapMax=0
+NoNewPrivileges=true
+UMask=0027

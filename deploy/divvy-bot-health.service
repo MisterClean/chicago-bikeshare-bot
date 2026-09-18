@@ -1,7 +1,0 @@
-[Unit]
-Description=Check Divvy Station Bluesky Bot health
-After=divvy-bot.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/sbin/check-divvy-bot-health

@@ -1,0 +1,26 @@
+#!/bin/bash
+set -euo pipefail
+# This descriptor survives exec: deployments wait for the entire worker run.
+exec 9>/var/lib/divvy-bot/deployment.lock
+flock --wait 1500 9
+cd /var/lib/divvy-bot
+export DB_PATH=/var/lib/divvy-bot/bot.sqlite3
+# Fail closed if persistent storage is missing. Never silently create a baseline.
+test -s "$DB_PATH"
+if [[ "${1:-run}" == catch-up ]]; then
+  due=$(/usr/bin/python3 - <<'PY'
+import datetime, sqlite3, sys
+now = datetime.datetime.now(datetime.timezone.utc)
+slot = now.replace(hour=(now.hour // 6) * 6, minute=0, second=0, microsecond=0)
+with sqlite3.connect('file:/var/lib/divvy-bot/bot.sqlite3?mode=ro', uri=True) as db:
+    row = db.execute("SELECT max(started_at) FROM runs WHERE status='succeeded'").fetchone()
+last = datetime.datetime.fromisoformat(row[0].replace('Z', '+00:00')) if row[0] else None
+print('yes' if last is None or last < slot else 'no')
+PY
+  )
+  if [[ "$due" == no ]]; then
+    exit 0
+  fi
+  set -- run
+fi
+exec /opt/chicago-bikeshare-bot/current/chicago-bikeshare-bot "${@:-run}" >>/var/log/chicago-bikeshare-bot/worker.log 2>&1

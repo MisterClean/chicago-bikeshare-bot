@@ -1,0 +1,11 @@
+[Unit]
+Description=Deploy approved Chicago Bikeshare Bot native release
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/divvy-bot.env
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/deploy-chicago-bikeshare-bot
+TimeoutStartSec=3600
+UMask=0027

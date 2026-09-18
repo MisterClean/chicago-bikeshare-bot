@@ -1,0 +1,18 @@
+id: chicago_bikeshare_bot
+name: Chicago Bikeshare Bot
+enabled: true
+schedule:
+  cron: "0 0 0,6,12,18 * * *"
+  timezone: UTC
+max_concurrency: 1
+tasks:
+  - id: run_bot
+    type: command
+    command: /opt/chicago-bikeshare-bot/current/deploy/run-bot
+    args: [run]
+    working_dir: /var/lib/divvy-bot
+    timeout_secs: 1500
+    retry:
+      max_attempts: 0
+      delay_secs: 0
+      condition: never
