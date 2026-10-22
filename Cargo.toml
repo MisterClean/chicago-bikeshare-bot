@@ -2,7 +2,7 @@
 name = "chicago-bikeshare-bot"
 version = "3.0.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.99"
 publish = false
 
 [[bin]]
@@ -14,7 +14,7 @@ anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 dotenvy = "0.15"
 fs2 = "0.4"
-rusqlite = { version = "0.38", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

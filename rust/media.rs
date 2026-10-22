@@ -264,7 +264,7 @@ fn render_once(
     draw_card(&mut pixmap, &font, station, style, electrified);
     drop(font);
     let mut rgb = Vec::with_capacity(view.width as usize * view.height as usize * 3);
-    for pixel in pixmap.data().chunks_exact(4) {
+    for pixel in pixmap.data().as_chunks::<4>().0 {
         rgb.extend_from_slice(&pixel[..3]);
     }
     drop(pixmap);
@@ -688,7 +688,7 @@ fn draw_card(canvas: &mut Pixmap, font: &Font, station: &Station, style: Style, 
         .enumerate()
     {
         let alpha = ((y as f32 / h - 0.52) / 0.36).clamp(0., 1.);
-        for pixel in row.chunks_exact_mut(4) {
+        for pixel in row.as_chunks_mut::<4>().0 {
             for i in 0..3 {
                 pixel[i] = (pixel[i] as f32 * (1. - alpha) + background[i] * alpha) as u8;
             }

@@ -37,7 +37,7 @@ pub struct Value {
 }
 impl Layer {
     pub fn property<'a>(&'a self, feature: &Feature, name: &str) -> Option<&'a str> {
-        feature.tags.chunks_exact(2).find_map(|tag| {
+        feature.tags.as_chunks::<2>().0.iter().find_map(|tag| {
             if self.keys.get(tag[0] as usize)?.as_str() != name {
                 return None;
             }
