@@ -16,8 +16,8 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Set up Rust
         run: |
-          rustup toolchain install 1.94.0 --profile minimal --component rustfmt --component clippy
-          rustup default 1.94.0
+          rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
+          rustup default 1.99.1
       - name: Formatting
         run: cargo fmt --check
       - name: Lint

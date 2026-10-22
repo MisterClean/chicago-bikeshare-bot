@@ -1,6 +1,6 @@
 # Compile on the builder's native CPU, including on Apple Silicon. Only the
 # finished executable uses the requested platform; rustc never needs emulation.
-FROM --platform=$BUILDPLATFORM rust:1.94.0-slim-bookworm AS build
+FROM --platform=$BUILDPLATFORM rust:1.99.1-slim-bookworm AS build
 ARG TARGETARCH
 WORKDIR /build
 RUN case "$TARGETARCH" in \
