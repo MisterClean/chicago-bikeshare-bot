@@ -26,9 +26,11 @@ jobs:
         run: |
           cargo test --locked
           python3 -m unittest discover -s tests -p 'test_*.py' -v
-          bash -n deploy/run-bot scripts/build-release
+          bash -n deploy/run-bot scripts/build-release scripts/prepare-petit
       - name: Build native worker and pinned Petit
         run: scripts/build-release
+      - name: Test updated scheduler libraries
+        run: cargo test --manifest-path output/vendor/petit/Cargo.toml --locked --no-default-features --features sqlite --lib
       - name: Smoke-test native bundle and Petit execution
         run: python3 tests/petit_smoke.py dist/bundle/pt
       - name: Upload the tested Linux bundle

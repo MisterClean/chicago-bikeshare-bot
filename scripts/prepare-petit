@@ -1,0 +1,10 @@
+#!/bin/bash
+set -euo pipefail
+readonly PETIT_REV=170dee43be847b29bc065f4265a4b3e16d4fb7fd
+mkdir -p output/vendor
+if [[ ! -d output/vendor/petit/.git ]]; then
+  git clone https://github.com/PedramNavid/petit.git output/vendor/petit
+fi
+git -C output/vendor/petit checkout --detach "$PETIT_REV"
+# Keep upstream source fixed while reviewing its updated dependency graph here.
+cp dependencies/petit/Cargo.lock output/vendor/petit/Cargo.lock

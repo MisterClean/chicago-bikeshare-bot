@@ -17,3 +17,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.99.1
       - run: cargo install cargo-audit --locked --version 0.22.2
       - run: cargo audit --target-os linux --target-arch x86_64
+      - name: Prepare and audit the shared scheduler dependencies
+        run: |
+          scripts/prepare-petit
+          cargo tree --manifest-path output/vendor/petit/Cargo.toml --locked --no-default-features --features sqlite --target x86_64-unknown-linux-gnu --edges normal --prefix none --format '{p}' > /tmp/petit-dependencies.txt
+          if grep -Eq '^rsa v' /tmp/petit-dependencies.txt; then
+            echo 'The RSA advisory exception requires RSA to be absent from the deployed scheduler.' >&2
+            exit 1
+          fi
+          cargo audit --file dependencies/petit/Cargo.lock --target-os linux --target-arch x86_64 --ignore RUSTSEC-2023-0071
